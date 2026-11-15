@@ -1,0 +1,489 @@
+{% comment %}
+  Hero Slider — sections/hero-slider.liquid
+  - Fixed background
+  - TRUE slide: models physically move left/right (not fade)
+  - Separate size controls for desktop and mobile
+  - Auto-slides + mouse drag + touch swipe
+  - Shop Now bottom center
+{% endcomment %}
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500&display=swap');
+
+  .hero-slider-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    min-height: 600px;
+    overflow: hidden;
+    background: #111;
+    cursor: grab;
+    user-select: none;
+  }
+
+  .hero-slider-wrapper.is-dragging { cursor: grabbing; }
+
+  .hero-slider__fixed-bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    z-index: 0;
+  }
+
+  .hero-slider__fixed-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.18);
+    z-index: 1;
+  }
+
+  /* ── MODEL TRACK: a wide strip that slides left/right ── */
+  .hero-slider__track {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    /* width set by JS based on number of slides */
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    z-index: 2;
+    transition: transform 0.7s cubic-bezier(0.77, 0, 0.18, 1);
+    will-change: transform;
+    pointer-events: none;
+  }
+
+  /* Each slide slot is 100vw wide, centers the model */
+  .hero-slider__slide-slot {
+    width: 100vw;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .hero-slider__model-img {
+    object-fit: contain;
+    object-position: bottom center;
+    display: block;
+    /* height set inline per slide */
+    width: auto;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* ── SHOP NOW ── */
+  .hero-slider__cta {
+    position: absolute;
+    bottom: 48px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    pointer-events: auto;
+  }
+
+  .hero-slider__cta-btn {
+    display: inline-block;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.7);
+    padding: 15px 52px;
+    text-decoration: none;
+    position: relative;
+    overflow: hidden;
+    white-space: nowrap;
+    background: rgba(0,0,0,0.2);
+    backdrop-filter: blur(4px);
+    transition: color 0.35s;
+  }
+
+  .hero-slider__cta-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    transform: translateX(-102%);
+    transition: transform 0.4s cubic-bezier(0.77, 0, 0.18, 1);
+  }
+
+  .hero-slider__cta-btn:hover::before { transform: translateX(0); }
+  .hero-slider__cta-btn:hover { color: #111; }
+  .hero-slider__cta-btn span { position: relative; z-index: 1; }
+
+  /* ── DOTS ── */
+  .hero-slider__dots {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 10;
+    pointer-events: auto;
+  }
+
+  .hero-slider__dot {
+    width: 24px;
+    height: 2px;
+    background: rgba(255,255,255,0.3);
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    transition: background 0.3s, width 0.3s;
+  }
+
+  .hero-slider__dot.is-active {
+    background: #fff;
+    width: 42px;
+  }
+
+  /* ── PROGRESS BAR ── */
+  .hero-slider__progress {
+    position: absolute;
+    top: 0; left: 0;
+    height: 3px;
+    background: rgba(255,255,255,0.9);
+    width: 0%;
+    z-index: 20;
+    transition: none;
+    pointer-events: none;
+  }
+
+  .hero-slider__progress.animating {
+    transition: width linear;
+  }
+
+  /* ── SWIPE HINT ── */
+  .hero-slider__swipe-hint {
+    position: absolute;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Montserrat', sans-serif;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.4);
+    z-index: 10;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 1s ease;
+    white-space: nowrap;
+  }
+
+  .hero-slider__swipe-hint.hide { opacity: 0; }
+
+  @media (max-width: 768px) {
+    .hero-slider__cta { bottom: 56px; }
+    .hero-slider__swipe-hint { bottom: 96px; }
+  }
+</style>
+
+<div class="hero-slider-wrapper" id="heroSlider">
+
+  <div class="hero-slider__progress" id="sliderProgress"></div>
+
+  <!-- Fixed background -->
+  <div class="hero-slider__fixed-bg"
+    style="background-image: url('{{ section.settings.background_image | img_url: "master" }}');">
+  </div>
+  <div class="hero-slider__fixed-overlay"></div>
+
+  <!-- Sliding track with all model slots -->
+  <div class="hero-slider__track" id="sliderTrack">
+    {% for block in section.blocks %}
+      {% assign desktop_size = block.settings.model_size_desktop | default: 90 %}
+      {% assign mobile_size  = block.settings.model_size_mobile  | default: 75 %}
+      <div class="hero-slider__slide-slot">
+        {% if block.settings.model_image %}
+          <img
+            class="hero-slider__model-img"
+            src="{{ block.settings.model_image | img_url: 'master' }}"
+            alt="Model {{ forloop.index }}"
+            loading="{% if forloop.first %}eager{% else %}lazy{% endif %}"
+            data-desktop="{{ desktop_size }}"
+            data-mobile="{{ mobile_size }}"
+            draggable="false"
+          >
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Swipe hint -->
+  <div class="hero-slider__swipe-hint" id="swipeHint">← swipe to browse →</div>
+
+  <!-- Shop Now -->
+  <div class="hero-slider__cta">
+    <a href="{{ section.settings.button_link }}" class="hero-slider__cta-btn">
+      <span>{{ section.settings.button_label | default: 'Shop Now' }}</span>
+    </a>
+  </div>
+
+  <!-- Dots -->
+  <div class="hero-slider__dots" id="sliderDots">
+    {% for block in section.blocks %}
+      <button
+        class="hero-slider__dot {% if forloop.first %}is-active{% endif %}"
+        data-index="{{ forloop.index0 }}"
+        aria-label="Slide {{ forloop.index }}"
+      ></button>
+    {% endfor %}
+  </div>
+
+</div>
+
+<script>
+(function() {
+  const wrapper   = document.getElementById('heroSlider');
+  const track     = document.getElementById('sliderTrack');
+  const dots      = Array.from(document.querySelectorAll('.hero-slider__dot'));
+  const progress  = document.getElementById('sliderProgress');
+  const swipeHint = document.getElementById('swipeHint');
+  const imgs      = Array.from(document.querySelectorAll('.hero-slider__model-img'));
+  const total     = dots.length;
+
+  const AUTOPLAY_DELAY = {{ section.settings.autoplay_speed | default: 4000 }};
+  const SWIPE_THRESHOLD = 40;
+
+  let current = 0;
+  let autoplayTimer = null;
+
+  // ── SET IMAGE HEIGHTS based on screen size ────────────────
+  function applyImageSizes() {
+    const isMobile = window.innerWidth <= 768;
+    imgs.forEach(img => {
+      const pct = isMobile
+        ? parseInt(img.dataset.mobile  || 75)
+        : parseInt(img.dataset.desktop || 90);
+      img.style.height = pct + 'vh';
+    });
+  }
+
+  applyImageSizes();
+  window.addEventListener('resize', applyImageSizes);
+
+  // ── SLIDE TO INDEX ────────────────────────────────────────
+  function goTo(index, animate) {
+    const prev = current;
+    current = (index + total) % total;
+
+    // Move track: each slot is 100vw
+    if (animate === false) {
+      track.style.transition = 'none';
+    } else {
+      track.style.transition = 'transform 0.7s cubic-bezier(0.77, 0, 0.18, 1)';
+    }
+    track.style.transform = 'translateX(-' + (current * 100) + 'vw)';
+
+    dots[prev].classList.remove('is-active');
+    dots[current].classList.add('is-active');
+
+    resetProgress();
+  }
+
+  function resetProgress() {
+    progress.classList.remove('animating');
+    progress.style.width = '0%';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      progress.style.transitionDuration = AUTOPLAY_DELAY + 'ms';
+      progress.classList.add('animating');
+      progress.style.width = '100%';
+    }));
+  }
+
+  function startAutoplay() {
+    clearInterval(autoplayTimer);
+    autoplayTimer = setInterval(() => goTo(current + 1), AUTOPLAY_DELAY);
+  }
+
+  function stopAutoplay() {
+    clearInterval(autoplayTimer);
+    progress.classList.remove('animating');
+  }
+
+  // Dot clicks
+  dots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      goTo(parseInt(dot.dataset.index));
+      stopAutoplay(); startAutoplay();
+    });
+  });
+
+  // ── DRAG / SWIPE ──────────────────────────────────────────
+  let dragStartX = 0;
+  let dragCurrentX = 0;
+  let dragging = false;
+  let hasMoved = false;
+
+  function onDragStart(x) {
+    dragStartX = x;
+    dragCurrentX = x;
+    dragging = true;
+    hasMoved = false;
+    wrapper.classList.add('is-dragging');
+    stopAutoplay();
+    // Disable transition while dragging for live follow
+    track.style.transition = 'none';
+  }
+
+  function onDragMove(x) {
+    if (!dragging) return;
+    dragCurrentX = x;
+    const diff = dragStartX - x;
+    if (Math.abs(diff) > 5) hasMoved = true;
+    // Live drag: move track with finger/cursor
+    const basePx = current * window.innerWidth;
+    track.style.transform = 'translateX(-' + (basePx + diff) + 'px)';
+  }
+
+  function onDragEnd(x) {
+    if (!dragging) return;
+    dragging = false;
+    wrapper.classList.remove('is-dragging');
+
+    const dx = dragStartX - x;
+    const dy = 0; // not tracking Y here, just horizontal
+
+    if (hasMoved && Math.abs(dx) > SWIPE_THRESHOLD) {
+      goTo(dx > 0 ? current + 1 : current - 1);
+      swipeHint.classList.add('hide');
+    } else {
+      // Snap back
+      goTo(current);
+    }
+    startAutoplay();
+  }
+
+  // Mouse
+  wrapper.addEventListener('mousedown', e => {
+    if (e.target.closest('a, button')) return;
+    e.preventDefault();
+    onDragStart(e.clientX);
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    onDragMove(e.clientX);
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (!dragging) return;
+    onDragEnd(e.clientX);
+  });
+
+  // Touch
+  wrapper.addEventListener('touchstart', e => {
+    if (e.target.closest('a, button')) return;
+    onDragStart(e.touches[0].clientX);
+  }, { passive: true });
+
+  wrapper.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    onDragMove(e.touches[0].clientX);
+  }, { passive: true });
+
+  wrapper.addEventListener('touchend', e => {
+    if (!dragging) return;
+    onDragEnd(e.changedTouches[0].clientX);
+  });
+
+  // Pause on hover (desktop only)
+  wrapper.addEventListener('mouseenter', () => { if (!dragging) stopAutoplay(); });
+  wrapper.addEventListener('mouseleave', () => { if (!dragging) startAutoplay(); });
+
+  // ── INIT ─────────────────────────────────────────────────
+  track.style.width = (total * 100) + 'vw';
+  goTo(0, false);
+  startAutoplay();
+  setTimeout(() => swipeHint.classList.add('hide'), 3500);
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Hero Slider",
+  "tag": "section",
+  "class": "hero-slider-section",
+  "settings": [
+    {
+      "type": "image_picker",
+      "id": "background_image",
+      "label": "Background image (shared for all slides)"
+    },
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "Button text",
+      "default": "Shop Now"
+    },
+    {
+      "type": "url",
+      "id": "button_link",
+      "label": "Button link"
+    },
+    {
+      "type": "range",
+      "id": "autoplay_speed",
+      "min": 2000,
+      "max": 8000,
+      "step": 500,
+      "unit": "ms",
+      "label": "Autoplay speed",
+      "default": 4000
+    }
+  ],
+  "blocks": [
+    {
+      "type": "slide",
+      "name": "Model Slide",
+      "settings": [
+        {
+          "type": "image_picker",
+          "id": "model_image",
+          "label": "Model image (PNG with transparent background recommended)"
+        },
+        {
+          "type": "range",
+          "id": "model_size_desktop",
+          "min": 40,
+          "max": 100,
+          "step": 5,
+          "unit": "%",
+          "label": "Model size — Desktop (% of screen height)",
+          "default": 90
+        },
+        {
+          "type": "range",
+          "id": "model_size_mobile",
+          "min": 30,
+          "max": 95,
+          "step": 5,
+          "unit": "%",
+          "label": "Model size — Mobile (% of screen height)",
+          "default": 75
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "Hero Slider",
+      "blocks": [
+        { "type": "slide" },
+        { "type": "slide" },
+        { "type": "slide" },
+        { "type": "slide" },
+        { "type": "slide" }
+      ]
+    }
+  ],
+  "max_blocks": 10
+}
+{% endschema %}
